@@ -12,16 +12,13 @@ from bot_handlers import register_handlers
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("telegram-bot")
 
-# --- التوكن من متغيّرات البيئة ---
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TOKEN:
     raise RuntimeError("⚠️ ضع TELEGRAM_TOKEN في Environment (Render → Settings → Environment).")
 
-# Telegram app + handlers
 tg_app = Application.builder().token(TOKEN).build()
 register_handlers(tg_app)
 
-# FastAPI app
 app = FastAPI()
 
 @app.get("/health")
