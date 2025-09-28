@@ -38,4 +38,7 @@ async def webhook(request: Request):
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "3000"))
+    @app.get("/")
+async def root():
+    return JSONResponse({"msg": "Bot server running"})
     uvicorn.run("server:app", host="0.0.0.0", port=port)
