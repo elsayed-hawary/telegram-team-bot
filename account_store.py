@@ -39,10 +39,8 @@ def get_account_by_user(user_id: int, path: str = DEFAULT_PATH) -> Optional[Dict
 
 def create_or_update_account(user_id: int, name: str, path: str = DEFAULT_PATH) -> Dict[str, Any]:
     d = _load(path)
-    # إن كان ليه اكاونت قبل كده حدث الاسم فقط
     acc_id = d["by_user"].get(str(user_id))
     if not acc_id:
-        # انشئ ID جديد
         while True:
             acc_id = _gen_id("U")
             if acc_id not in d["accounts"]:
