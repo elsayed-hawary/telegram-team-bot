@@ -14,12 +14,16 @@ logger = logging.getLogger("telegram-bot")
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TOKEN:
-    raise RuntimeError("⚠️ ضع TELEGRAM_TOKEN في Environment (Render → Settings → Environment).")
+    raise RuntimeError("⚠️ ضع TELEGRAM_TOKEN في Environment variables.")
 
 tg_app = Application.builder().token(TOKEN).build()
 register_handlers(tg_app)
 
 app = FastAPI()
+
+@app.get("/")
+async def root():
+    return JSONResponse({"msg": "Bot server running"})
 
 @app.get("/health")
 async def health():
@@ -29,6 +33,7 @@ async def health():
 async def webhook(request: Request):
     try:
         data = await request.json()
+        logger.info("📩 Update from Telegram: %s", data)  # دي هتظهر في اللوجز
         update = Update.de_json(data, tg_app.bot)
         asyncio.create_task(tg_app.process_update(update))
         return PlainTextResponse("OK", status_code=200)
@@ -38,9 +43,4 @@ async def webhook(request: Request):
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "3000"))
-    @app.get("/")
-async def root():
-    @app.get("/")
-async def root():
-    return JSONResponse({"msg": "Bot server running"})
     uvicorn.run("server:app", host="0.0.0.0", port=port)
