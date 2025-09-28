@@ -6,40 +6,35 @@ import uvicorn
 
 from telegram import Update
 from telegram.ext import Application
-
 from bot_handlers import register_handlers
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("telegram-bot")
 
-# === التوكن: من ENV ولو مش موجود هنستخدم احتياطي (غير آمن لكن يمنع سقوط السيرفر) ===
 TOKEN = (os.getenv("TELEGRAM_TOKEN") or "8331353191:AAGnY-ZfvDZZBjBN3qkkmnwCIrporljxEDg").strip()
-if not TOKEN or ":" not in TOKEN:
-    # لو حتى الاحتياطي مش صالح، شغّل السيرفر بدون بوت لتعمل /health
-    logger.error("No valid TELEGRAM_TOKEN found. Bot will not start, but health is up.")
-    BOT_ENABLED = False
-    tg_app = None
-else:
-    BOT_ENABLED = True
-    tg_app = Application.builder().token(TOKEN).build()
-    register_handlers(tg_app)
-    logger.info("Bot app built. Token hash: %s", hash(TOKEN))
 
 app = FastAPI()
+tg_app: Application | None = None
+
+@app.on_event("startup")
+async def on_startup():
+    global tg_app
+    tg_app = Application.builder().token(TOKEN).build()
+    register_handlers(tg_app)
+    # أهم سطر ↓
+    await tg_app.initialize()
+    logger.info("✅ Telegram bot initialized")
 
 @app.get("/")
 async def root():
-    return JSONResponse({"msg": "Bot server running", "bot_enabled": BOT_ENABLED})
+    return JSONResponse({"msg": "Bot server running"})
 
 @app.get("/health")
 async def health():
-    return JSONResponse({"status": "ok", "bot_enabled": BOT_ENABLED})
+    return JSONResponse({"status": "ok"})
 
 @app.post("/webhook")
 async def webhook(request: Request):
-    if not BOT_ENABLED or tg_app is None:
-        # لو البوت متعطّل، رجّع 503 عشان تعرف من اللوجز
-        return PlainTextResponse("BOT_DISABLED", status_code=503)
     try:
         data = await request.json()
         logger.info("📩 Update from Telegram: %s", data)
