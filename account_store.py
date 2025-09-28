@@ -1,5 +1,5 @@
 # account_store.py
-import os, json, string, secrets
+import os, json, secrets, string
 from typing import Dict, Any, Optional
 
 DEFAULT_PATH = os.getenv("ACCOUNTS_PATH", "./data/accounts.json")
@@ -28,9 +28,9 @@ def _save(d: Dict[str, Any], path: str = DEFAULT_PATH) -> None:
         json.dump(d, f, ensure_ascii=False, indent=2)
     os.replace(tmp, path)
 
-def _gen_id(prefix: str, length: int = 6) -> str:
-    alphabet = string.ascii_uppercase + string.digits
-    return prefix + "".join(secrets.choice(alphabet) for _ in range(length))
+def _gen_numeric_id(length: int = 6) -> str:
+    digits = string.digits
+    return "".join(secrets.choice(digits) for _ in range(length))
 
 def get_account_by_user(user_id: int, path: str = DEFAULT_PATH) -> Optional[Dict[str, Any]]:
     d = _load(path)
@@ -43,18 +43,18 @@ def create_or_update_account(user_id: int, name: str, username: Optional[str] = 
     acc_id = d["by_user"].get(str(user_id))
     if not acc_id:
         while True:
-            acc_id = _gen_id("U")
+            acc_id = _gen_numeric_id(6)  # أرقام فقط
             if acc_id not in d["accounts"]:
                 break
         d["by_user"][str(user_id)] = acc_id
         d["accounts"][acc_id] = {
             "account_id": acc_id,
             "user_id": int(user_id),
-            "name": name,
+            "name": name.strip(),
             "username": username or ""
         }
     else:
-        d["accounts"][acc_id]["name"] = name
+        d["accounts"][acc_id]["name"] = name.strip()
         if username is not None:
             d["accounts"][acc_id]["username"] = username
     _save(d, path)
