@@ -1,126 +1,161 @@
 # bot_handlers.py
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+import base64
+from telegram import (
+    Update, ReplyKeyboardMarkup, KeyboardButton,
+    InlineKeyboardButton, InlineKeyboardMarkup
+)
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    ContextTypes, filters
+    CallbackQueryHandler, ContextTypes, filters
 )
 
-from account_store import create_or_update_account, get_account_by_user
-from group_store import create_group, get_group, add_member, my_groups
+from team_store import (
+    new_team, set_team_name, get_team_by_id,
+    request_join, approve, deny, my_team
+)
 
-# ==== نصوص الأزرار ====
-BTN_CREATE_ACC = "🆕 إنشاء حساب"
-BTN_JOIN_GROUP = "👥 الانضمام إلى مجموعة"
-BTN_MY_ACC     = "🆔 حسابي"
-BTN_HELP       = "ℹ️ مساعدة"
+# أزرار الكيبورد الجديدة
+BTN_CREATE = "🆕 إنشاء حساب/مجموعة"
+BTN_JOIN   = "👥 الانضمام إلى مجموعة"
+BTN_MYID   = "🆔 حسابي"
+BTN_MYTEAM = "👥 مجموعتي"
+BTN_HELP   = "ℹ️ مساعدة"
 
-def build_kb() -> ReplyKeyboardMarkup:
-    rows = [
-        [KeyboardButton(BTN_CREATE_ACC), KeyboardButton(BTN_JOIN_GROUP)],
-        [KeyboardButton(BTN_MY_ACC),     KeyboardButton(BTN_HELP)],
-    ]
-    return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=False)
-
-async def send_kb(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
-    # يدعم الرد سواء كانت الرسالة أمرًا أو نصًا
-    if update.message:
-        await update.message.reply_text(text, reply_markup=build_kb())
-    else:
-        await context.bot.send_message(update.effective_chat.id, text, reply_markup=build_kb())
-
-# ==== أوامر أساسية ====
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_kb(update, context, "أهلاً 👋\nاختَر من الأزرار بالأسفل.")
-
-async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = (
-        f"القائمة:\n"
-        f"• {BTN_CREATE_ACC} — يطلب اسمك ويُنشئ لك ID حساب.\n"
-        f"• {BTN_JOIN_GROUP} — يطلب ID المجموعة للانضمام.\n"
-        f"• {BTN_MY_ACC} — يعرض حسابك الحالي.\n"
-        f"• /mkgroup اسم_المجموعة — (للتجربة) إنشاء مجموعة وإرجاع Group ID.\n"
-        "ملاحظـة: شكل IDs مثل: حساب `UABC123` — مجموعة `GABC123`."
+def reply_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [
+            [KeyboardButton(BTN_CREATE), KeyboardButton(BTN_JOIN)],
+            [KeyboardButton(BTN_MYID),   KeyboardButton(BTN_MYTEAM)],
+            [KeyboardButton(BTN_HELP)]
+        ],
+        resize_keyboard=True, one_time_keyboard=False
     )
-    await send_kb(update, context, msg)
+
+async def _send(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    await update.message.reply_text(text, reply_markup=reply_kb())
+
+# أوامر
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _send(update, context, "أهلاً 👋\nاختَر من الأزرار بالأسفل.")
 
 async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_kb(update, context, "✅ version: accounts+groups v1.0")
+    await _send(update, context, "✅ version: teams-by-ID v1.0")
 
-# ==== إنشاء مجموعة (اختياري للتجربة) ====
-async def cmd_mkgroup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = " ".join(context.args).strip()
-    if not name:
-        return await send_kb(update, context, "استخدم: /mkgroup اسم_المجموعة")
-    acc = get_account_by_user(update.effective_user.id)
-    if not acc:
-        return await send_kb(update, context, "أولاً أنشئ حساب من الزر: 🆕 إنشاء حساب")
-    g = create_group(name, update.effective_user.id)
-    await send_kb(update, context, f"✅ تم إنشاء المجموعة: {g['name']}\n🆔 Group ID: {g['group_id']}")
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _send(update, context,
+        f"• {BTN_CREATE}: يولّد Team ID ويطلب اسم المجموعة.\n"
+        f"• {BTN_JOIN}: يطلب Team ID للانضمام (يذهب للمالك للموافقة).\n"
+        f"• {BTN_MYID}: يعرض رقم حسابك.\n"
+        f"• {BTN_MYTEAM}: تفاصيل مجموعتك إن وُجدت."
+    )
 
-# ==== التعامل مع الأزرار كنصوص ====
+# حالات الإدخال
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (update.message.text or "").strip()
 
-    # حالات انتظار إدخال
-    waiting = context.user_data.get("awaiting")
-    if waiting == "CREATE_NAME":
-        name = text
-        if not name:
-            return await send_kb(update, context, "❌ اسم غير صالح. أعد المحاولة.")
-        acc = create_or_update_account(update.effective_user.id, name)
-        return await finish_wait(update, context,
-            f"🎉 تم إنشاء حسابك.\n"
-            f"الاسم: {acc['name']}\n"
-            f"🆔 Account ID: {acc['account_id']}")
+    state = context.user_data.get("state")
+    if state == "AWAIT_NAME":
+        team_id = context.user_data.get("team_id")
+        if not team_id:
+            context.user_data.clear()
+            return await _send(update, context, "حصل خطأ، جرّب إنشاء الحساب مرة أخرى.")
+        set_team_name(team_id, text)
+        context.user_data.clear()
+        return await _send(update, context, f"✅ تم تعيين الاسم: {text}\n🆔 Team ID: {team_id}")
 
-    if waiting == "JOIN_GROUP":
-        group_id = text.upper().replace(" ", "")
-        g = get_group(group_id)
-        if not g:
-            return await finish_wait(update, context, "❌ لم أجد مجموعة بهذا الـID. تأكد منه وحاول مرة أخرى.")
-        # لازم يكون عندك حساب أولًا
-        acc = get_account_by_user(update.effective_user.id)
-        if not acc:
-            return await finish_wait(update, context, "⚠️ لست تمتلك حسابًا بعد. أنشئ حسابًا أولًا من الزر 🆕.")
-        add_member(group_id, update.effective_user.id)
-        return await finish_wait(update, context, f"✅ تم انضمامك إلى المجموعة: {g['name']} ({g['group_id']})")
+    if state == "AWAIT_JOIN_ID":
+        team_id = text.upper().replace(" ", "")
+        try:
+            t = request_join(team_id, update.effective_user.id)
+        except ValueError as e:
+            code = str(e)
+            if code == "TEAM_NOT_FOUND":
+                return await _send(update, context, "❌ Team ID غير صحيح.")
+            if code == "ALREADY_MEMBER":
+                context.user_data.clear()
+                return await _send(update, context, "✅ أنت بالفعل عضو.")
+            return await _send(update, context, "حدث خطأ. حاول لاحقًا.")
+        context.user_data.clear()
+        owner_id = t["owner_id"]
+        uid = update.effective_user.id
+        uname = update.effective_user.username or update.effective_user.full_name
+        payload = base64.urlsafe_b64encode(f"{team_id}|{uid}".encode()).decode()
+        kb = [[
+            InlineKeyboardButton("✅ موافقة", callback_data=f"APPROVE:{payload}"),
+            InlineKeyboardButton("✖️ رفض",    callback_data=f"DENY:{payload}")
+        ]]
+        try:
+            await context.bot.send_message(
+                owner_id,
+                f"📨 طلب انضمام:\nTeam ID: {team_id}\nالمستخدم: {uname} (ID: {uid})",
+                reply_markup=InlineKeyboardMarkup(kb)
+            )
+        except Exception:
+            pass
+        return await _send(update, context, "تم إرسال الطلب للمالك ✔️")
 
-    # تنفيذ الأزرار
-    if text == BTN_CREATE_ACC:
-        acc = get_account_by_user(update.effective_user.id)
-        if acc:
-            return await send_kb(update, context, f"لديك حساب بالفعل:\nالاسم: {acc['name']}\n🆔 Account ID: {acc['account_id']}")
-        context.user_data["awaiting"] = "CREATE_NAME"
-        return await send_kb(update, context, "✍️ اكتب اسمك الآن (رسالة واحدة).")
+    # أزرار
+    if text == BTN_CREATE:
+        team_id = new_team(update.effective_user.id)
+        context.user_data["state"] = "AWAIT_NAME"
+        context.user_data["team_id"] = team_id
+        return await _send(update, context,
+            f"🎉 تم إنشاء الحساب!\n🆔 Team ID: {team_id}\n"
+            "اكتب اسم المجموعة الآن ليتم تعيينه."
+        )
 
-    if text == BTN_JOIN_GROUP:
-        context.user_data["awaiting"] = "JOIN_GROUP"
-        return await send_kb(update, context, "✍️ اكتب **ID المجموعة** الآن (مثل: GABC123).")
+    if text == BTN_JOIN:
+        context.user_data["state"] = "AWAIT_JOIN_ID"
+        return await _send(update, context, "اكتب Team ID للمجموعة التي تريد الانضمام لها.")
 
-    if text == BTN_MY_ACC:
-        acc = get_account_by_user(update.effective_user.id)
-        if not acc:
-            return await send_kb(update, context, "لا يوجد حساب بعد. استخدم زر 🆕 إنشاء حساب.")
-        # اعرض حسابي + المجموعات اللي أنا عضو فيها
-        groups = my_groups(update.effective_user.id)
-        extra = ""
-        if groups:
-            extra = "\n\nمجموعاتك:\n" + "\n".join([f"- {g['name']} ({g['group_id']})" for g in groups])
-        return await send_kb(update, context, f"الاسم: {acc['name']}\n🆔 Account ID: {acc['account_id']}{extra}")
+    if text == BTN_MYID:
+        return await _send(update, context, f"🆔 ID الخاص بك:\n{update.effective_user.id}")
 
-    if text == BTN_HELP or text == "/help":
+    if text == BTN_MYTEAM:
+        t = my_team(update.effective_user.id)
+        if not t:
+            return await _send(update, context, "🚫 لست عضوًا بأي مجموعة.")
+        name = t['name'] or "— لم يُعيَّن —"
+        return await _send(update, context,
+            f"👥 مجموعتك:\n• Team ID: {t['id']}\n• الاسم: {name}\n"
+            f"• المالك: {t['owner_id']}\n• الأعضاء: {len(t.get('members', []))}\n"
+            f"• طلبات معلّقة: {len(t.get('pending', []))}"
+        )
+
+    if text == BTN_HELP or text in ("/help", "/menu"):
         return await cmd_help(update, context)
 
-    # أي نص آخر
-    return await send_kb(update, context, f"إنت كتبت: {text}\nاستخدم الأزرار بالأسفل.")
+    return await _send(update, context, f"استخدم الأزرار بالأسفل.\n(كتبت: {text})")
 
-async def finish_wait(update: Update, context: ContextTypes.DEFAULT_TYPE, msg: str):
-    context.user_data.pop("awaiting", None)
-    await send_kb(update, context, msg)
+# موافقة/رفض
+async def on_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    try:
+        action, payload = q.data.split(":", 1)
+        team_id, uid_str = base64.urlsafe_b64decode(payload.encode()).decode().split("|", 1)
+        uid = int(uid_str)
+    except Exception:
+        return await q.edit_message_text("بيانات غير صالحة.")
+    t = get_team_by_id(team_id)
+    if not t:
+        return await q.edit_message_text("المجموعة غير موجودة.")
+    if update.effective_user.id != t["owner_id"]:
+        return await q.edit_message_text("للّمالك فقط.")
+    if action == "APPROVE":
+        approve(team_id, uid)
+        await q.edit_message_text(f"✅ تم قبول {uid} في {team_id}.")
+        try: await context.bot.send_message(uid, f"🎉 تم قبولك في المجموعة (ID: {team_id})")
+        except Exception: pass
+    else:
+        deny(team_id, uid)
+        await q.edit_message_text(f"✖️ تم رفض {uid}.")
+        try: await context.bot.send_message(uid, f"عذرًا، تم رفض طلبك (ID: {team_id}).")
+        except Exception: pass
 
 def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("start",   cmd_start))
     app.add_handler(CommandHandler("help",    cmd_help))
     app.add_handler(CommandHandler("version", cmd_version))
-    app.add_handler(CommandHandler("mkgroup", cmd_mkgroup))  # اختياري للتجربة
+    app.add_handler(CallbackQueryHandler(on_decision, pattern="^(APPROVE|DENY):"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
