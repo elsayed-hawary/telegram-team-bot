@@ -1,5 +1,5 @@
 # team_store.py
-import os, json
+import os, json, random, string
 from typing import Dict, Any, Optional
 
 DEFAULT_PATH = os.getenv("TEAMS_PATH", "./data/teams.json")
@@ -19,8 +19,8 @@ def _load(path: str = DEFAULT_PATH) -> Dict[str, Any]:
             d = json.load(f)
         except json.JSONDecodeError:
             d = {}
-    if "teams" not in d: d["teams"] = {}
-    if "memberships" not in d: d["memberships"] = {}
+    d.setdefault("teams", {})
+    d.setdefault("memberships", {})
     return d
 
 def _save(data: Dict[str, Any], path: str = DEFAULT_PATH) -> None:
@@ -30,70 +30,83 @@ def _save(data: Dict[str, Any], path: str = DEFAULT_PATH) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
     os.replace(tmp, path)
 
-def _key(name: str) -> str:
-    return name.strip().lower()
+def _gen_id(k: int = 6) -> str:
+    alphabet = string.ascii_uppercase + string.digits
+    return "".join(random.choice(alphabet) for _ in range(k))
 
-def create_team(name: str, owner_id: int, path: str = DEFAULT_PATH) -> Dict[str, Any]:
+# --------- واجهة بالـ Team ID ---------
+
+def new_team(owner_id: int, path: str = DEFAULT_PATH) -> str:
+    """ينشئ Team جديد بمعرّف تلقائي ويُسجّل المالك عضوًا."""
     data = _load(path)
-    k = _key(name)
-    if k not in data["teams"]:
-        data["teams"][k] = {
-            "name": name.strip(),
-            "owner_id": int(owner_id),
-            "members": [int(owner_id)],
-            "pending": []
-        }
-    data["memberships"][str(owner_id)] = k
+    while True:
+        tid = _gen_id()
+        if tid not in data["teams"]:
+            break
+    data["teams"][tid] = {
+        "id": tid,
+        "name": "",                 # يُعيَّن لاحقًا بـ set_team_name
+        "owner_id": int(owner_id),
+        "members": [int(owner_id)],
+        "pending": []
+    }
+    data["memberships"][str(owner_id)] = tid
     _save(data, path)
-    return data
+    return tid
 
-def get_team(name: str, path: str = DEFAULT_PATH) -> Optional[Dict[str, Any]]:
-    d = _load(path)
-    return d["teams"].get(_key(name))
-
-def request_join(name: str, user_id: int, path: str = DEFAULT_PATH) -> Dict[str, Any]:
-    d = _load(path)
-    k = _key(name)
-    if k not in d["teams"]:
+def set_team_name(team_id: str, name: str, path: str = DEFAULT_PATH) -> Dict[str, Any]:
+    data = _load(path)
+    t = data["teams"].get(team_id)
+    if not t:
         raise ValueError("TEAM_NOT_FOUND")
-    t = d["teams"][k]
+    t["name"] = name.strip()
+    _save(data, path)
+    return t
+
+def get_team_by_id(team_id: str, path: str = DEFAULT_PATH) -> Optional[Dict[str, Any]]:
+    return _load(path)["teams"].get(team_id)
+
+def request_join(team_id: str, user_id: int, path: str = DEFAULT_PATH) -> Dict[str, Any]:
+    d = _load(path)
+    t = d["teams"].get(team_id)
+    if not t:
+        raise ValueError("TEAM_NOT_FOUND")
     uid = int(user_id)
     if uid in t["members"]:
         raise ValueError("ALREADY_MEMBER")
     if uid not in t["pending"]:
         t["pending"].append(uid)
     _save(d, path)
-    return d
+    return t
 
-def approve(name: str, user_id: int, path: str = DEFAULT_PATH) -> Dict[str, Any]:
+def approve(team_id: str, user_id: int, path: str = DEFAULT_PATH) -> Dict[str, Any]:
     d = _load(path)
-    k = _key(name)
-    if k not in d["teams"]:
+    t = d["teams"].get(team_id)
+    if not t:
         raise ValueError("TEAM_NOT_FOUND")
-    t = d["teams"][k]
     uid = int(user_id)
     if uid in t["pending"]:
         t["pending"].remove(uid)
     if uid not in t["members"]:
         t["members"].append(uid)
-    d["memberships"][str(uid)] = k
+    d["memberships"][str(uid)] = team_id
     _save(d, path)
-    return d
+    return t
 
-def deny(name: str, user_id: int, path: str = DEFAULT_PATH) -> Dict[str, Any]:
+def deny(team_id: str, user_id: int, path: str = DEFAULT_PATH) -> Dict[str, Any]:
     d = _load(path)
-    k = _key(name)
-    if k not in d["teams"]:
+    t = d["teams"].get(team_id)
+    if not t:
         raise ValueError("TEAM_NOT_FOUND")
-    t = d["teams"][k]
     uid = int(user_id)
     if uid in t["pending"]:
         t["pending"].remove(uid)
     _save(d, path)
-    return d
+    return t
 
 def my_team(user_id: int, path: str = DEFAULT_PATH) -> Optional[Dict[str, Any]]:
     d = _load(path)
-    k = d["memberships"].get(str(user_id))
-    if not k: return None
-    return d["teams"].get(k)
+    tid = d["memberships"].get(str(user_id))
+    if not tid:
+        return None
+    return d["teams"].get(tid)
