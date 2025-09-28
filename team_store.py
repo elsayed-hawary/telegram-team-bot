@@ -36,15 +36,13 @@ def _key(name: str) -> str:
 def create_team(name: str, owner_id: int, path: str = DEFAULT_PATH) -> Dict[str, Any]:
     data = _load(path)
     k = _key(name)
-    if k in data["teams"]:
-        # لو موجود نخلي المالك زي ما هو
-        return data
-    data["teams"][k] = {
-        "name": name.strip(),
-        "owner_id": int(owner_id),
-        "members": [int(owner_id)],
-        "pending": []
-    }
+    if k not in data["teams"]:
+        data["teams"][k] = {
+            "name": name.strip(),
+            "owner_id": int(owner_id),
+            "members": [int(owner_id)],
+            "pending": []
+        }
     data["memberships"][str(owner_id)] = k
     _save(data, path)
     return data
@@ -62,10 +60,8 @@ def request_join(name: str, user_id: int, path: str = DEFAULT_PATH) -> Dict[str,
     uid = int(user_id)
     if uid in t["members"]:
         raise ValueError("ALREADY_MEMBER")
-    if uid in t["pending"]:
-        # موجود طلب قديم
-        return d
-    t["pending"].append(uid)
+    if uid not in t["pending"]:
+        t["pending"].append(uid)
     _save(d, path)
     return d
 
