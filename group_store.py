@@ -15,10 +15,8 @@ def _ensure_path(path: str) -> None:
 def _load(path: str = DEFAULT_PATH) -> Dict[str, Any]:
     _ensure_path(path)
     with open(path, "r", encoding="utf-8") as f:
-        try:
-            d = json.load(f)
-        except json.JSONDecodeError:
-            d = {}
+        try: d = json.load(f)
+        except json.JSONDecodeError: d = {}
     d.setdefault("groups", {})
     return d
 
@@ -44,7 +42,7 @@ def create_group(name: str, owner_user_id: int, path: str = DEFAULT_PATH) -> Dic
         "name": name.strip(),
         "owner_user_id": int(owner_user_id),
         "members": [int(owner_user_id)],
-        "pending": []  # طلبات انتظار موافقة المالك
+        "pending": []
     }
     _save(d, path)
     return d["groups"][gid]
@@ -52,17 +50,18 @@ def create_group(name: str, owner_user_id: int, path: str = DEFAULT_PATH) -> Dic
 def get_group(group_id: str, path: str = DEFAULT_PATH) -> Optional[Dict[str, Any]]:
     return _load(path)["groups"].get(group_id.strip().upper())
 
+def is_owner(group_id: str, user_id: int, path: str = DEFAULT_PATH) -> bool:
+    g = get_group(group_id, path)
+    return bool(g and g["owner_user_id"] == int(user_id))
+
 def request_join(group_id: str, user_id: int, path: str = DEFAULT_PATH) -> Dict[str, Any]:
     d = _load(path)
     gid = group_id.strip().upper()
     g = d["groups"].get(gid)
-    if not g:
-        raise ValueError("GROUP_NOT_FOUND")
+    if not g: raise ValueError("GROUP_NOT_FOUND")
     uid = int(user_id)
-    if uid in g["members"]:
-        raise ValueError("ALREADY_MEMBER")
-    if uid not in g["pending"]:
-        g["pending"].append(uid)
+    if uid in g["members"]: raise ValueError("ALREADY_MEMBER")
+    if uid not in g["pending"]: g["pending"].append(uid)
     _save(d, path)
     return g
 
@@ -70,13 +69,10 @@ def approve_join(group_id: str, user_id: int, path: str = DEFAULT_PATH) -> Dict[
     d = _load(path)
     gid = group_id.strip().upper()
     g = d["groups"].get(gid)
-    if not g:
-        raise ValueError("GROUP_NOT_FOUND")
+    if not g: raise ValueError("GROUP_NOT_FOUND")
     uid = int(user_id)
-    if uid in g["pending"]:
-        g["pending"].remove(uid)
-    if uid not in g["members"]:
-        g["members"].append(uid)
+    if uid in g["pending"]: g["pending"].remove(uid)
+    if uid not in g["members"]: g["members"].append(uid)
     _save(d, path)
     return g
 
@@ -84,9 +80,33 @@ def deny_join(group_id: str, user_id: int, path: str = DEFAULT_PATH) -> Dict[str
     d = _load(path)
     gid = group_id.strip().upper()
     g = d["groups"].get(gid)
-    if not g:
-        raise ValueError("GROUP_NOT_FOUND")
+    if not g: raise ValueError("GROUP_NOT_FOUND")
     uid = int(user_id)
+    if uid in g["pending"]: g["pending"].remove(uid)
+    _save(d, path)
+    return g
+
+def add_member(group_id: str, user_id: int, path: str = DEFAULT_PATH) -> Dict[str, Any]:
+    d = _load(path)
+    gid = group_id.strip().upper()
+    g = d["groups"].get(gid)
+    if not g: raise ValueError("GROUP_NOT_FOUND")
+    uid = int(user_id)
+    if uid not in g["members"]:
+        g["members"].append(uid)
+    if uid in g["pending"]:
+        g["pending"].remove(uid)
+    _save(d, path)
+    return g
+
+def remove_member(group_id: str, user_id: int, path: str = DEFAULT_PATH) -> Dict[str, Any]:
+    d = _load(path)
+    gid = group_id.strip().upper()
+    g = d["groups"].get(gid)
+    if not g: raise ValueError("GROUP_NOT_FOUND")
+    uid = int(user_id)
+    if uid in g["members"] and uid != g["owner_user_id"]:
+        g["members"].remove(uid)
     if uid in g["pending"]:
         g["pending"].remove(uid)
     _save(d, path)
