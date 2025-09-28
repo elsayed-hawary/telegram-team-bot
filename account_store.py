@@ -37,7 +37,8 @@ def get_account_by_user(user_id: int, path: str = DEFAULT_PATH) -> Optional[Dict
     acc_id = d["by_user"].get(str(user_id))
     return d["accounts"].get(acc_id) if acc_id else None
 
-def create_or_update_account(user_id: int, name: str, path: str = DEFAULT_PATH) -> Dict[str, Any]:
+def create_or_update_account(user_id: int, name: str, username: Optional[str] = None,
+                             path: str = DEFAULT_PATH) -> Dict[str, Any]:
     d = _load(path)
     acc_id = d["by_user"].get(str(user_id))
     if not acc_id:
@@ -46,8 +47,29 @@ def create_or_update_account(user_id: int, name: str, path: str = DEFAULT_PATH) 
             if acc_id not in d["accounts"]:
                 break
         d["by_user"][str(user_id)] = acc_id
-        d["accounts"][acc_id] = {"account_id": acc_id, "user_id": int(user_id), "name": name}
+        d["accounts"][acc_id] = {
+            "account_id": acc_id,
+            "user_id": int(user_id),
+            "name": name,
+            "username": username or ""
+        }
     else:
         d["accounts"][acc_id]["name"] = name
+        if username is not None:
+            d["accounts"][acc_id]["username"] = username
     _save(d, path)
     return d["accounts"][acc_id]
+
+def set_username(user_id: int, username: Optional[str], path: str = DEFAULT_PATH) -> None:
+    d = _load(path)
+    acc_id = d["by_user"].get(str(user_id))
+    if acc_id and username is not None:
+        d["accounts"][acc_id]["username"] = username
+        _save(d, path)
+
+def get_display(user_id: int, path: str = DEFAULT_PATH) -> str:
+    acc = get_account_by_user(user_id, path)
+    if acc:
+        uname = ("@" + acc["username"]) if acc.get("username") else ""
+        return f"{acc['name']} {uname}".strip()
+    return str(user_id)
