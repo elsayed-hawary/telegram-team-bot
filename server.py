@@ -1,38 +1,39 @@
 # server.py
-import os, asyncio
+import os, asyncio, logging
 from fastapi import FastAPI, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, JSONResponse
 import uvicorn
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application
+from bot_handlers import register_handlers
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("telegram-bot")
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TOKEN:
     raise RuntimeError("Please set TELEGRAM_TOKEN env var")
 
-# Telegram app (python-telegram-bot v20+)
 tg_app = Application.builder().token(TOKEN).build()
+register_handlers(tg_app)
 
-async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("البوت شغال ✅")
-
-tg_app.add_handler(CommandHandler("start", start_cmd))
-
-# FastAPI web server (for webhook & health)
 app = FastAPI()
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return JSONResponse({"status": "ok"})
 
 @app.post("/webhook")
 async def webhook(request: Request):
-    data = await request.json()
-    update = Update.de_json(data, tg_app.bot)
-    # schedule processing (non-blocking)
-    asyncio.create_task(tg_app.process_update(update))
-    return PlainTextResponse("OK", status_code=200)
+    try:
+        data = await request.json()
+        update = Update.de_json(data, tg_app.bot)
+        asyncio.create_task(tg_app.process_update(update))
+        return PlainTextResponse("OK", status_code=200)
+    except Exception as e:
+        logger.exception("Webhook error: %s", e)
+        return PlainTextResponse("ERROR", status_code=500)
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "3000"))
